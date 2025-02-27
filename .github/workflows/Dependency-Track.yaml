@@ -13,20 +13,47 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
-        
+
       - name: Install dependencies
         run: npm install
-        
+      
       - name: Generate SBOM
         run: |
           export FETCH_LICENSE=true
-          npm install -g @cyclonedx/cdxgen && cdxgen -r -o bom.json
-      
+          npm install -g @cyclonedx/cdxgen
+          cdxgen -r -o bom.json || { echo "❌ SBOM generation failed!"; exit 1; }
+          ls -lah bom.json  # Check if SBOM file exists and print its size
+          cat bom.json | head -n 20  # Print first 20 lines for debugging
+
       - name: Validate SBOM JSON format
         run: |
-          cat bom.json || { echo "❌ SBOM file not generated!"; exit 1; }
+          if [ ! -s bom.json ]; then
+            echo "❌ SBOM file is empty! Generation failed."
+            exit 1
+          fi
           jq . bom.json || { echo "❌ Invalid JSON format in SBOM!"; exit 1; }
-      
+
+      - name: Verify Dependency-Track Connectivity
+        env:
+          DT_URL: ${{ secrets.DT_URL }}
+          API_KEY: ${{ secrets.DT_API_KEY }}
+        run: |
+          echo "Checking connection to Dependency-Track..."
+          curl -k -X GET "$DT_URL/api/version" -H "X-Api-Key: $API_KEY" -w "%{http_code}" -o response.txt
+          echo "Server Response Code: $(cat response.txt)"
+
+      - name: Check if Project Exists in Dependency-Track
+        env:
+          DT_URL: ${{ secrets.DT_URL }}
+          API_KEY: ${{ secrets.DT_API_KEY }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+          PROJECT_VERSION: ${{ secrets.PROJECT_VERSION }}
+        run: |
+          echo "Checking if project exists in Dependency-Track..."
+          curl -k -X GET "$DT_URL/api/v1/project/lookup?name=$PROJECT_NAME&version=$PROJECT_VERSION" \
+            -H "X-Api-Key: $API_KEY" -H "Accept: application/json" -w "%{http_code}" -o response.txt
+          echo "Server Response Code: $(cat response.txt)"
+
       - name: Upload SBOM to Dependency-Track
         env:
           DT_URL: ${{ secrets.DT_URL }}
