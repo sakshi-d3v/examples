@@ -12,20 +12,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install Dependencies
-        run: npm install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci || npm install --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
 
       - name: Fix Security Vulnerabilities
-        run: npm audit fix --force || echo "Security vulnerabilities could not be fixed, continuing..."
+        run: |
+          npm audit fix --force || echo "Security vulnerabilities could not be fixed, continuing..."
 
-      - name: Generate CycloneDX SBOM
+      - name: Install CycloneDX and Generate SBOM
         run: |
           export FETCH_LICENSE=true
           npm install -g @cyclonedx/cdxgen
           cdxgen -r -o bom.json || { echo "SBOM generation failed"; exit 1; }
           cat bom.json  # Output SBOM contents for debugging
+          sudo apt-get install -y jq  # Ensure jq is installed
           jq . bom.json || { echo "Invalid SBOM JSON"; exit 1; }
 
       - name: Run Markdown Linter (Non-blocking)
@@ -33,10 +40,23 @@ jobs:
 
       - name: Upload SBOM to OWASP Dependency-Track
         run: |
-          curl -k -X POST "${{ secrets.DT_URL }}/api/v1/bom" \
+          if [ ! -f bom.json ]; then
+            echo "Error: bom.json not found, cannot upload SBOM."
+            exit 1
+          fi
+
+          RESPONSE=$(curl -s -o response.txt -w "%{http_code}" -k -X POST "${{ secrets.DT_URL }}/api/v1/bom" \
             -H "Content-Type: multipart/form-data" \
             -H "X-Api-Key: ${{ secrets.API_KEY }}" \
             -F "autoCreate=true" \
             -F "projectName=${{ secrets.PROJECT_NAME }}" \
             -F "projectVersion=${{ secrets.PROJECT_VERSION }}" \
-            -F "bom=@bom.json"
+            -F "bom=@bom.json")
+
+          if [[ "$RESPONSE" -ne 200 && "$RESPONSE" -ne 201 ]]; then
+            echo "Failed to upload SBOM. Response:"
+            cat response.txt
+            exit 1
+          fi
+
+          echo "SBOM uploaded successfully."
