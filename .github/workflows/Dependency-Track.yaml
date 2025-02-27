@@ -62,7 +62,7 @@ jobs:
           PROJECT_VERSION: ${{ secrets.PROJECT_VERSION }}
         run: |
           echo "Uploading SBOM to Dependency-Track..."
-          RESPONSE=$(curl -k -X PUT "$DT_URL/api/v1/bom" \
+          RESPONSE=$(curl -k -X POST "$DT_URL/api/v1/bom" \
             -H "Content-Type: application/json" \
             -H "X-Api-Key: $API_KEY" \
             --data-binary "@bom.json" -w "%{http_code}" -o response.txt)
