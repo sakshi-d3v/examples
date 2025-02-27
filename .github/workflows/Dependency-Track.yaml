@@ -1,6 +1,5 @@
 name: CryptoSoftInc-SBOM
 description: This action builds a CycloneDX Format SBOM for a repository and sends it to an OWASP DT server
-
 on: 
   push:
     branches:
@@ -11,19 +10,42 @@ jobs:
   generate-sbom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - run: npm install
-        shell: bash
-      - run: |
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        
+      - name: Install dependencies
+        run: npm install
+        
+      - name: Generate SBOM
+        run: |
           export FETCH_LICENSE=true
           npm install -g @cyclonedx/cdxgen && cdxgen -r -o bom.json
-        shell: bash
-      - run: |
-          curl -k -X POST "${{ secrets.DT_URL }}/api/v1/bom" \
-            -H "Content-Type: multipart/form-data" \
-            -H "X-Api-Key: ${{ secrets.API_KEY }}" \
-            -F "autoCreate=true" \
-            -F "projectName=${{ secrets.PROJECT_NAME }}" \
-            -F "projectVersion=${{ secrets.PROJECT_VERSION }}" \
-            -F "bom=@bom.json"
-        shell: bash
+        
+      - name: Upload SBOM to Dependency-Track
+        env:
+          DT_URL: ${{ secrets.DT_URL }}
+          API_KEY: ${{ secrets.DT_API_KEY }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+          PROJECT_VERSION: ${{ secrets.PROJECT_VERSION }}
+          PARENT_NAME: ${{ secrets.PARENT_NAME }}
+          PARENT_VERSION: ${{ secrets.PARENT_VERSION }}
+        run: |
+          if [[ -n "$PARENT_NAME" && -n "$PARENT_VERSION" ]]; then
+            curl -k -X POST "$DT_URL/api/v1/bom" \
+              -H "Content-Type: multipart/form-data" \
+              -H "X-Api-Key: $API_KEY" \
+              -F "autoCreate=true" \
+              -F "projectName=$PROJECT_NAME" \
+              -F "projectVersion=$PROJECT_VERSION" \
+              -F "parentName=$PARENT_NAME" \
+              -F "parentVersion=$PARENT_VERSION" \
+              -F "bom=@bom.json"
+          else
+            curl -k -X POST "$DT_URL/api/v1/bom" \
+              -H "Content-Type: multipart/form-data" \
+              -H "X-Api-Key: $API_KEY" \
+              -F "autoCreate=true" \
+              -F "projectName=$PROJECT_NAME" \
+              -F "projectVersion=$PROJECT_VERSION" \
+              -F "bom=@bom.json"
+          fi
