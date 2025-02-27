@@ -1,127 +1,45 @@
 name: CryptoSoftInc-SBOM
-description: This action builds a CycloneDX Format SBOM for a repository and sends it to an OWASP DT server.
-
-on:
-  push:
-    branches:
-      - main
-  pull_request:
+description: This action builds a CycloneDX Format Software Bill of Materials (SBOM) for a repository and sends it to an OWASP DT server
+on: [push, pull_request]
 
 jobs:
-  generate-sbom:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        node-version: [14.x]
 
-      - name: Install Dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci || npm install --legacy-peer-deps
-          else
-            npm install --legacy-peer-deps
-          fi
+inputs:
+  dt-url:
+    description: 'The URL of the Dependency-Track API server to send the SBOM to OWASP Dependency Track Server'
+    required: true
+  api-key:
+    description: 'The API key used to authenticate with the Dependency-Track API server.'
+    required: true
+  project-name:
+    description: 'Project name.'
+    required: true
+  project-version:
+    description: 'Project version.'
+    required: true
 
-      - name: Fix Security Vulnerabilities
-        run: |
-          npm audit fix --force || echo "⚠️ Security vulnerabilities could not be fixed, continuing..."
-
-      - name: Install CycloneDX and Generate SBOM
-        run: |
-          echo "🚀 Installing CycloneDX SBOM Generator..."
-          export FETCH_LICENSE=true
-          npm install -g @cyclonedx/cdxgen
-
-          echo "🔄 Generating SBOM from package.json..."
-          cdxgen -r -o bom.json
-
-          echo "🔍 Checking if SBOM file (bom.json) was created..."
-          if [ ! -f bom.json ]; then
-            echo "❌ Error: SBOM generation failed! bom.json not found."
-            exit 1
-          fi
-
-          echo "✅ SBOM file generated successfully. Logging contents:"
-          cat bom.json  # Print SBOM file contents for debugging
-
-          echo "Installing jq to validate JSON format..."
-          sudo apt-get update && sudo apt-get install -y jq
-
-          echo "Validating SBOM JSON format..."
-          jq . bom.json || { echo " Invalid SBOM JSON format!"; exit 1; }
-
-      - name: Run Markdown Linter (Non-blocking)
-        run: |
-          npm run test:markdown || echo "Markdown linting failed, skipping..."
-
-      - name: Check if Project Exists in Dependency-Track
-        run: |
-          echo "Checking if project exists in Dependency-Track..."
-          PROJECT_RESPONSE=$(curl -s -X GET "${{ secrets.DT_URL }}/api/v1/project/lookup?name=${{ secrets.PROJECT_NAME }}&version=${{ secrets.PROJECT_VERSION }}" \
-            -H "X-Api-Key: ${{ secrets.API_KEY }}" -H "Accept: application/json")
-
-          echo "Project Lookup Response:"
-          echo "$PROJECT_RESPONSE" | jq .
-
-          PROJECT_ID=$(echo "$PROJECT_RESPONSE" | jq -r '.uuid // empty')
-
-          if [ -z "$PROJECT_ID" ]; then
-            echo "Project does not exist. Creating new project..."
-            CREATE_RESPONSE=$(curl -s -X PUT "${{ secrets.DT_URL }}/api/v1/project" \
-              -H "Content-Type: application/json" -H "X-Api-Key: ${{ secrets.API_KEY }}" \
-              --data '{
-                "name": "'${{ secrets.PROJECT_NAME }}'",
-                "version": "'${{ secrets.PROJECT_VERSION }}'",
-                "active": true,
-                "classifier": "APPLICATION"
-              }')
-
-            echo "Create Project Response:"
-            echo "$CREATE_RESPONSE" | jq .
-
-            NEW_PROJECT_ID=$(echo "$CREATE_RESPONSE" | jq -r '.uuid // empty')
-
-            if [ -z "$NEW_PROJECT_ID" ]; then
-              echo "Failed to create project. Check API response above."
-              exit 1
-            fi
-            echo "Project created successfully! ID: $NEW_PROJECT_ID"
-          else
-            echo "Project already exists with ID: $PROJECT_ID"
-          fi
-
-      - name: Upload SBOM to OWASP Dependency-Track
-        run: |
-          echo "Uploading SBOM to Dependency-Track..."
-          
-          if [ ! -f bom.json ]; then
-            echo "SBOM file missing! Cannot upload."
-            exit 1
-          fi
-
-          for i in {1..3}; do
-            echo "Attempt $i to upload SBOM..."
-            RESPONSE=$(curl -s -o response.txt -w "%{http_code}" -k -X POST "${{ secrets.DT_URL }}/api/v1/bom" \
-              -H "Content-Type: multipart/form-data" \
-              -H "X-Api-Key: ${{ secrets.API_KEY }}" \
-              -F "autoCreate=true" \
-              -F "projectName=${{ secrets.PROJECT_NAME }}" \
-              -F "projectVersion=${{ secrets.PROJECT_VERSION }}" \
-              -F "bom=@bom.json")
-
-            HTTP_STATUS=$(cat response.txt | jq -r '.status // empty')
-            echo "Dependency-Track API Response Code: $HTTP_STATUS"
-            echo "API Response Body:"
-            cat response.txt | jq .
-
-            if [[ "$HTTP_STATUS" -eq 200 || "$HTTP_STATUS" -eq 201 ]]; then
-              echo "SBOM uploaded successfully!"
-              exit 0
-            fi
-
-            echo "Failed to upload SBOM. Attempt $i/3. Retrying in 5 seconds..."
-            sleep 5
-          done
-
-          echo "Failed to upload SBOM after 3 attempts."
-          exit 1
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/checkout@v2 
+    - run: npm install
+      shell: bash
+    - run: |
+        export FETCH_LICENSE=true
+        npm install -g @cyclonedx/cdxgen && cdxgen -r -o bom.json
+      shell: bash
+    - run: |
+        curl -k -X POST "${{ inputs.dt-url }}/api/v1/bom" \
+          -H "Content-Type: multipart/form-data" \
+          -H "X-Api-Key:${{ inputs.api-key }}" \
+          -F "autoCreate=true" \
+          -F "projectName=${{ inputs.project-name }}" \
+          -F "projectVersion=${{ inputs.project-version }}" \
+          -F "bom=@bom.json"
+      shell: bash
