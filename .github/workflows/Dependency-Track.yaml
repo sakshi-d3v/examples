@@ -28,22 +28,35 @@ jobs:
 
       - name: Install CycloneDX and Generate SBOM
         run: |
+          echo "Installing CycloneDX SBOM Generator..."
           export FETCH_LICENSE=true
           npm install -g @cyclonedx/cdxgen
-          cdxgen -r -o bom.json || { echo "SBOM generation failed"; exit 1; }
-          cat bom.json  # Output SBOM contents for debugging
-          sudo apt-get install -y jq  # Ensure jq is installed
-          jq . bom.json || { echo "Invalid SBOM JSON"; exit 1; }
+
+          echo "Generating SBOM from package.json..."
+          cdxgen -r -o bom.json
+
+          echo "Checking if SBOM file (bom.json) was created..."
+          if [ ! -f bom.json ]; then
+            echo "❌ Error: SBOM generation failed! bom.json not found."
+            exit 1
+          fi
+
+          echo "SBOM file generated successfully. Checking contents..."
+          cat bom.json  # Print SBOM file contents for debugging
+
+          echo "Installing jq to validate JSON format..."
+          sudo apt-get update && sudo apt-get install -y jq
+
+          echo "Validating SBOM JSON format..."
+          jq . bom.json || { echo "❌ Invalid SBOM JSON format!"; exit 1; }
 
       - name: Run Markdown Linter (Non-blocking)
-        run: npm run test:markdown || echo "Markdown linting failed, skipping..."
+        run: |
+          npm run test:markdown || echo "Markdown linting failed, skipping..."
 
       - name: Upload SBOM to OWASP Dependency-Track
         run: |
-          if [ ! -f bom.json ]; then
-            echo "Error: bom.json not found, cannot upload SBOM."
-            exit 1
-          fi
+          echo "Uploading SBOM to Dependency-Track..."
 
           RESPONSE=$(curl -s -o response.txt -w "%{http_code}" -k -X POST "${{ secrets.DT_URL }}/api/v1/bom" \
             -H "Content-Type: multipart/form-data" \
@@ -53,10 +66,14 @@ jobs:
             -F "projectVersion=${{ secrets.PROJECT_VERSION }}" \
             -F "bom=@bom.json")
 
+          HTTP_STATUS=$(cat response.txt)
+          echo "Dependency-Track API Response Code: $RESPONSE"
+          echo "API Response Body:"
+          cat response.txt
+
           if [[ "$RESPONSE" -ne 200 && "$RESPONSE" -ne 201 ]]; then
-            echo "Failed to upload SBOM. Response:"
-            cat response.txt
+            echo "❌ Failed to upload SBOM. Response Code: $RESPONSE"
             exit 1
           fi
 
-          echo "SBOM uploaded successfully."
+          echo "✅ SBOM uploaded successfully!"
