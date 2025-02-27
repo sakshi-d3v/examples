@@ -21,12 +21,12 @@ jobs:
         run: |
           export FETCH_LICENSE=true
           npm install -g @cyclonedx/cdxgen && cdxgen -r -o bom.json
-
+      
       - name: Validate SBOM JSON format
         run: |
           cat bom.json || { echo "❌ SBOM file not generated!"; exit 1; }
           jq . bom.json || { echo "❌ Invalid JSON format in SBOM!"; exit 1; }
-
+      
       - name: Upload SBOM to Dependency-Track
         env:
           DT_URL: ${{ secrets.DT_URL }}
@@ -35,14 +35,14 @@ jobs:
           PROJECT_VERSION: ${{ secrets.PROJECT_VERSION }}
         run: |
           echo "Uploading SBOM to Dependency-Track..."
-          RESPONSE=$(curl -k -X POST "$DT_URL/api/v1/bom" \
+          RESPONSE=$(curl -k -X PUT "$DT_URL/api/v1/bom" \
             -H "Content-Type: application/json" \
             -H "X-Api-Key: $API_KEY" \
             --data-binary "@bom.json" -w "%{http_code}" -o response.txt)
-
+          
           echo "Server Response Code: $RESPONSE"
           cat response.txt
-
+          
           if [[ "$RESPONSE" -ne 200 && "$RESPONSE" -ne 201 ]]; then
             echo "❌ Failed to upload SBOM! Check response below:"
             cat response.txt
