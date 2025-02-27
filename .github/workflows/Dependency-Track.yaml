@@ -1,90 +1,50 @@
-name: CryptoSoftInc-SBOM
-description: This action builds a CycloneDX Format SBOM for a repository and sends it to an OWASP DT server
+name: Generate SBOM and Upload to OWASP DT
 
-on: 
+on:
   push:
     branches:
-      - main
-  pull_request:
+      - main  # Adjust this if needed
 
 jobs:
-  generate-sbom:
+  sbom:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-
+        uses: actions/checkout@v4
+      
       - name: Install dependencies
         run: npm install
-      
+
       - name: Generate SBOM
         run: |
           export FETCH_LICENSE=true
           npm install -g @cyclonedx/cdxgen
-          cdxgen -r -o bom.json || { echo "❌ SBOM generation failed!"; exit 1; }
-          ls -lah bom.json  # Check if SBOM file exists and print its size
-          cat bom.json | head -n 20  # Print first 20 lines for debugging
+          cdxgen -r -o bom.json
 
-      - name: Validate SBOM JSON format
-        run: |
-          if [ ! -s bom.json ]; then
-            echo "❌ SBOM file is empty! Generation failed."
-            exit 1
-          fi
-          jq . bom.json || { echo "❌ Invalid JSON format in SBOM!"; exit 1; }
+      - name: Log SBOM contents
+        run: cat bom.json
 
-      - name: Verify Dependency-Track Connectivity
+      - name: Upload SBOM Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-artifact
+          path: bom.json
+
+      - name: Download SBOM Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom-artifact
+          path: downloaded-sbom
+
+      - name: Upload SBOM to OWASP Dependency-Track
         env:
-          DT_URL: ${{ secrets.DT_URL }}
-          API_KEY: ${{ secrets.DT_API_KEY }}
+          ODT_API_KEY: ${{ secrets.ODT_API_KEY }}
         run: |
-          echo "Checking connection to Dependency-Track..."
-          curl -s -o dt_response.txt -w "%{http_code}" -k -X GET "$DT_URL/api/version" -H "X-Api-Key: $API_KEY"
-          cat dt_response.txt
-          if grep -q "version" dt_response.txt; then
-            echo "✅ Dependency-Track server is reachable."
-          else
-            echo "❌ Failed to connect to Dependency-Track!"
-            exit 1
-          fi
-
-      - name: Check if Project Exists in Dependency-Track
-        env:
-          DT_URL: ${{ secrets.DT_URL }}
-          API_KEY: ${{ secrets.DT_API_KEY }}
-          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
-          PROJECT_VERSION: ${{ secrets.PROJECT_VERSION }}
-        run: |
-          ENCODED_PROJECT_NAME=$(echo -n "$PROJECT_NAME" | jq -sRr @uri)
-          ENCODED_PROJECT_VERSION=$(echo -n "$PROJECT_VERSION" | jq -sRr @uri)
-          echo "Checking if project exists in Dependency-Track..."
-          RESPONSE=$(curl -s -o project_response.json -w "%{http_code}" -k -X GET "$DT_URL/api/v1/project/lookup?name=$ENCODED_PROJECT_NAME&version=$ENCODED_PROJECT_VERSION" \
-            -H "X-Api-Key: $API_KEY" -H "Accept: application/json")
-
-          if [[ "$RESPONSE" -ne 200 ]]; then
-            echo "❌ Project lookup failed! Response: $(cat project_response.json)"
-            exit 1
-          else
-            echo "✅ Project found in Dependency-Track."
-          fi
-
-      - name: Upload SBOM to Dependency-Track
-        env:
-          DT_URL: "https://dt-api-tech-peat-6.org.dependencytrack.com"
-          API_KEY: ${{ secrets.DT_API_KEY }}
-        run: |
-          echo "Uploading SBOM to Dependency-Track..."
-          RESPONSE=$(curl -s -o response.json -w "%{http_code}" -k -X POST "$DT_URL/api/v1/bom" \
-            -H "Content-Type: application/json" \
-            -H "X-Api-Key: $API_KEY" \
-            --data-binary "@bom.json")
-
-          echo "Server Response Code: $RESPONSE"
-          cat response.json
-
-          if [[ "$RESPONSE" -ne 200 && "$RESPONSE" -ne 201 ]]; then
-            echo "❌ Failed to upload SBOM! Response: $(cat response.json)"
-            exit 1
-          else
-            echo "✅ SBOM uploaded successfully!"
-          fi
+          curl -k -X POST "https://dt-api-tech-peat-6.org.dependencytrack.com/api/v1/bom" \
+            -H "Content-Type: multipart/form-data" \
+            -H "X-Api-Key: $ODT_API_KEY" \
+            -F "autoCreate=true" \
+            -F "projectName=test" \
+            -F "projectVersion=1.0.0" \
+            -F "bom=@downloaded-sbom/bom.json"
