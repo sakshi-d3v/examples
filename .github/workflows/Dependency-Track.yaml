@@ -24,31 +24,31 @@ jobs:
 
       - name: Fix Security Vulnerabilities
         run: |
-          npm audit fix --force || echo "Security vulnerabilities could not be fixed, continuing..."
+          npm audit fix --force || echo "⚠️ Security vulnerabilities could not be fixed, continuing..."
 
       - name: Install CycloneDX and Generate SBOM
         run: |
-          echo "Installing CycloneDX SBOM Generator..."
+          echo "🚀 Installing CycloneDX SBOM Generator..."
           export FETCH_LICENSE=true
           npm install -g @cyclonedx/cdxgen
 
-          echo "Generating SBOM from package.json..."
+          echo "🔄 Generating SBOM from package.json..."
           cdxgen -r -o bom.json
 
-          echo "Checking if SBOM file (bom.json) was created..."
+          echo "🔍 Checking if SBOM file (bom.json) was created..."
           if [ ! -f bom.json ]; then
             echo "❌ Error: SBOM generation failed! bom.json not found."
             exit 1
           fi
 
-          echo "SBOM file generated successfully. Checking contents..."
+          echo "✅ SBOM file generated successfully. Logging contents:"
           cat bom.json  # Print SBOM file contents for debugging
 
           echo "Installing jq to validate JSON format..."
           sudo apt-get update && sudo apt-get install -y jq
 
           echo "Validating SBOM JSON format..."
-          jq . bom.json || { echo "❌ Invalid SBOM JSON format!"; exit 1; }
+          jq . bom.json || { echo " Invalid SBOM JSON format!"; exit 1; }
 
       - name: Run Markdown Linter (Non-blocking)
         run: |
@@ -60,31 +60,47 @@ jobs:
           PROJECT_RESPONSE=$(curl -s -X GET "${{ secrets.DT_URL }}/api/v1/project/lookup?name=${{ secrets.PROJECT_NAME }}&version=${{ secrets.PROJECT_VERSION }}" \
             -H "X-Api-Key: ${{ secrets.API_KEY }}" -H "Accept: application/json")
 
-          echo "Project Lookup Response: $PROJECT_RESPONSE"
+          echo "Project Lookup Response:"
+          echo "$PROJECT_RESPONSE" | jq .
+
           PROJECT_ID=$(echo "$PROJECT_RESPONSE" | jq -r '.uuid // empty')
 
           if [ -z "$PROJECT_ID" ]; then
             echo "Project does not exist. Creating new project..."
-            CREATE_RESPONSE=$(curl -s -o create_project_response.json -w "%{http_code}" -X PUT "${{ secrets.DT_URL }}/api/v1/project" \
+            CREATE_RESPONSE=$(curl -s -X PUT "${{ secrets.DT_URL }}/api/v1/project" \
               -H "Content-Type: application/json" -H "X-Api-Key: ${{ secrets.API_KEY }}" \
-              --data '{"name": "'${{ secrets.PROJECT_NAME }}'", "version": "'${{ secrets.PROJECT_VERSION }}'", "active": true, "classifier": "APPLICATION"}')
+              --data '{
+                "name": "'${{ secrets.PROJECT_NAME }}'",
+                "version": "'${{ secrets.PROJECT_VERSION }}'",
+                "active": true,
+                "classifier": "APPLICATION"
+              }')
 
-            echo "Create Project Response Code: $CREATE_RESPONSE"
-            cat create_project_response.json
+            echo "Create Project Response:"
+            echo "$CREATE_RESPONSE" | jq .
 
-            if [[ "$CREATE_RESPONSE" -ne 200 && "$CREATE_RESPONSE" -ne 201 ]]; then
-              echo "❌ Failed to create project. Response Code: $CREATE_RESPONSE"
+            NEW_PROJECT_ID=$(echo "$CREATE_RESPONSE" | jq -r '.uuid // empty')
+
+            if [ -z "$NEW_PROJECT_ID" ]; then
+              echo "Failed to create project. Check API response above."
               exit 1
             fi
-            echo "✅ Project created successfully!"
+            echo "Project created successfully! ID: $NEW_PROJECT_ID"
           else
-            echo "✅ Project already exists with ID: $PROJECT_ID"
+            echo "Project already exists with ID: $PROJECT_ID"
           fi
 
       - name: Upload SBOM to OWASP Dependency-Track
         run: |
           echo "Uploading SBOM to Dependency-Track..."
+          
+          if [ ! -f bom.json ]; then
+            echo "SBOM file missing! Cannot upload."
+            exit 1
+          fi
+
           for i in {1..3}; do
+            echo "Attempt $i to upload SBOM..."
             RESPONSE=$(curl -s -o response.txt -w "%{http_code}" -k -X POST "${{ secrets.DT_URL }}/api/v1/bom" \
               -H "Content-Type: multipart/form-data" \
               -H "X-Api-Key: ${{ secrets.API_KEY }}" \
@@ -93,19 +109,19 @@ jobs:
               -F "projectVersion=${{ secrets.PROJECT_VERSION }}" \
               -F "bom=@bom.json")
 
-            HTTP_STATUS=$RESPONSE
+            HTTP_STATUS=$(cat response.txt | jq -r '.status // empty')
             echo "Dependency-Track API Response Code: $HTTP_STATUS"
             echo "API Response Body:"
-            cat response.txt
+            cat response.txt | jq .
 
             if [[ "$HTTP_STATUS" -eq 200 || "$HTTP_STATUS" -eq 201 ]]; then
-              echo "✅ SBOM uploaded successfully!"
+              echo "SBOM uploaded successfully!"
               exit 0
             fi
 
-            echo "⚠️ Failed to upload SBOM. Attempt $i/3. Retrying in 5 seconds..."
+            echo "Failed to upload SBOM. Attempt $i/3. Retrying in 5 seconds..."
             sleep 5
           done
 
-          echo "❌ Failed to upload SBOM after 3 attempts."
+          echo "Failed to upload SBOM after 3 attempts."
           exit 1
