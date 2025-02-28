@@ -37,6 +37,9 @@ jobs:
           name: sbom-artifact
           path: downloaded-sbom
 
+      - name: Debug API Key (Masked)
+        run: echo "API Key Length: ${#ODT_API_KEY}"
+
       - name: Validate API URL
         run: |
           echo "Validating Dependency-Track API URL..."
