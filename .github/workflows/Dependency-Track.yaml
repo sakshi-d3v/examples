@@ -21,7 +21,7 @@ jobs:
           export FETCH_LICENSE=true
           npm install -g @cyclonedx/cdxgen
           cdxgen -r -o bom.json
-
+      
       - name: Log SBOM contents
         run: cat bom.json
 
@@ -37,14 +37,36 @@ jobs:
           name: sbom-artifact
           path: downloaded-sbom
 
+      - name: Validate API URL
+        run: |
+          echo "Validating Dependency-Track API URL..."
+          RESPONSE=$(curl -s -o response.txt -w "%{http_code}" -k -X GET "https://dt-api-tech-peat-6.org.dependencytrack.com/api/version")
+          cat response.txt
+          if [[ "$RESPONSE" -ne 200 ]]; then
+            echo "❌ Invalid API URL or server unavailable. Check the API endpoint."
+            exit 1
+          fi
+          echo "✅ API URL validated successfully!"
+      
       - name: Upload SBOM to OWASP Dependency-Track
         env:
           ODT_API_KEY: ${{ secrets.ODT_API_KEY }}
         run: |
-          curl -k -X POST "https://dt-api-tech-peat-6.org.dependencytrack.com/api/v1/bom" \
+          echo "Uploading SBOM..."
+          RESPONSE=$(curl -s -o response.txt -w "%{http_code}" -k -X POST "https://dt-api-tech-peat-6.org.dependencytrack.com/api/v1/bom" \
             -H "Content-Type: multipart/form-data" \
             -H "X-Api-Key: $ODT_API_KEY" \
             -F "autoCreate=true" \
             -F "projectName=test" \
             -F "projectVersion=1.0.0" \
-            -F "bom=@downloaded-sbom/bom.json"
+            -F "bom=@downloaded-sbom/bom.json")
+          
+          echo "Server Response Code: $RESPONSE"
+          cat response.txt
+          
+          if [[ "$RESPONSE" -ne 200 && "$RESPONSE" -ne 201 ]]; then
+            echo "❌ Failed to upload SBOM! Check response below:"
+            cat response.txt
+            exit 1
+          fi
+          echo "✅ SBOM uploaded successfully!"
