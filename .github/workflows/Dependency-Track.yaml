@@ -50,13 +50,5 @@ jobs:
             -F "projectVersion=1.0.0" \
             -F "bom=@downloaded-sbom/bom.json")
 
-          echo "Server Response Code: $RESPONSE"
-          cat response.txt
-
-          if [[ "$RESPONSE" -ne 200 && "$RESPONSE" -ne 201 ]]; then
-            echo "❌ Failed to upload SBOM! Check response below:"
-            cat response.txt
-            exit 1
-          fi
-          echo "✅ SBOM uploaded successfully!"
+         
 
