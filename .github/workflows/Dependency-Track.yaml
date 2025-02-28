@@ -38,7 +38,8 @@ jobs:
           path: downloaded-sbom
 
       - name: Debug API Key (Masked)
-        run: echo "API Key Length: ${#ODT_API_KEY}"
+        run: |
+          echo "API Key Length: $(echo -n $ODT_API_KEY | wc -c)"
 
       - name: Validate API URL
         run: |
